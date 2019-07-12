@@ -1,5 +1,7 @@
 from django.contrib import admin
-from .models import User,Course,Teacher,Like,Comment,Order,UserAndCourse,Chapter,Problem,Option,Solution,UserAndProblem
+import pdb
+import types
+from .models import User,Course,Teacher,Like,Comment,Order,UserAndCourse,Chapter,Problem,Option,Solution,UserAndProblem,Score
 # Register your models here.
 
 @admin.register(User)
@@ -54,14 +56,27 @@ class SolutionInline(admin.TabularInline):
     model = Solution
     extra = 0
 
-class UserAndProblemInline(admin.TabularInline):
-    model = UserAndProblem
-    extra = 0
+class OptionsInlineInline(OptionsInline):
+    pass
 
 @admin.register(Problem)
 class ProblemAdmin(admin.ModelAdmin):
     list_display = ('title', 'chapter')
-    inlines = [OptionsInline, SolutionInline,UserAndProblemInline]
+    inlines = [OptionsInlineInline, SolutionInline]
+    def get_inline_instances(self, request, obj=None):
+        obj_id = request.resolver_match.kwargs['object_id']
+
+        def get_queryset(_self, request):
+            return super(OptionsInlineInline, _self).get_queryset(request).filter(problem_id=obj_id)
+
+        inlines = []
+        for inline_class in self.inlines:
+            inline = inline_class(self.model, self.admin_site)
+            if inline_class is OptionsInlineInline:
+                inline.get_queryset = types.MethodType(get_queryset, inline)
+                inline.queryset = inline.get_queryset(request).filter(problem_id=obj_id)
+            inlines.append(inline)
+        return inlines
 
 
 @admin.register(Option)
@@ -77,3 +92,8 @@ class SolutionAdmin(admin.ModelAdmin):
 @admin.register(UserAndProblem)
 class UserAndProblemAdmin(admin.ModelAdmin):
     list_display = ('problem', 'option','user','answered')
+
+
+@admin.register(Score)
+class ScoreAdmin(admin.ModelAdmin):
+    list_display = ('score', 'chapter','user','datetime')

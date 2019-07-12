@@ -1,4 +1,5 @@
 from django.db import models
+import pdb
 
 # Create your models here.
 
@@ -8,8 +9,12 @@ class User(models.Model):
     phone = models.CharField(max_length=11)
     is_student = models.BooleanField(default=False)
     image = models.ImageField(null=True,blank=True,upload_to='media')
+
     def __str__(self):
         return self.name
+
+    def is_teacher(self):
+        return self.teacher
 
     def to_dict(self):
         res = {k:v for k, v in self.__dict__.items() if not k.startswith('_') and k != 'password'}
@@ -31,13 +36,12 @@ class Teacher(models.Model):
     description = models.CharField(max_length=200)
 
     def __str__(self):
-        return self.subject.__str__()
+        return '[' + self.get_subject_display() + ']' + self.user.__str__()
 
     def to_dict(self):
         d = {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
         d.update(self.user.to_dict())
         return d
-
 
 
 class Course(models.Model):
@@ -85,7 +89,9 @@ class Chapter(models.Model):
     def __str__(self):
         return self.name
     def to_dict(self):
-        return {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
+        d = {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
+        d['course'] = self.course.get_subject_display()
+        return d
 
 class Like(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -144,12 +150,107 @@ class Problem(models.Model):
     def get_userAndProblems(self):
         return [u.to_dict() for u in self.userAndProblem_set.all()]
 
+    @classmethod
+    def get_problems_with_score_and_answer(cls, user_id=None, user=None,chapter_id=None, chapter=None):
+        """
+        根据用户和章节，获取题目信息，并携带用户的得分
+        Args:
+            user/user_id: 用户
+            chapter/chapter_id: 章节
+        Return：
+            list: 题目列表
+        """
+        chapter_id = chapter_id or chapter.id
+        user_id = user_id or user.id
+
+        # 章节对应的所有问题以及题目数量
+        problems = list(cls.objects.filter(chapter_id=chapter_id))
+        problems_count = len(problems)
+
+        for p in problems:
+            p.answer = None
+            p.score = 0
+            answer = p.get_user_answer(user_id=user_id)
+            if not answer:
+                continue
+            p.score = 100/problems_count if p.is_answer_correct(answer) else 0
+            p.answer = {
+                'option_id': answer.option_id,
+                'option_title': answer.option.title
+            }
+        return problems
+
+    @classmethod
+    def cal_chapter_score(cls, user_id=None, user=None,chapter_id=None, chapter=None):
+        """
+        计算章节练习得分
+        Args:
+            user/user_id: 用户
+            chapter/chapter_id: 章节
+        Return：
+            int: 章节练习得分
+        """
+        user_id = user_id or user.id
+        chapter_id = chapter_id or chapter.id
+        score = cls.get_chapter_score(user_id=user_id, chapter_id=chapter_id)
+        res, _ = Score.objects.get_or_create(chapter_id=chapter_id,user_id=user_id)
+        res.score = score
+        res.save()
+        return True
+
+    @classmethod
+    def get_chapter_score(cls, user_id=None, user=None,chapter_id=None, chapter=None):
+        """
+        计算章节练习得分
+        Args:
+            user/user_id: 用户
+            chapter/chapter_id: 章节
+        Return：
+            int: 章节练习得分
+        """
+        user_id = user_id or user.id
+        chapter_id = chapter_id or chapter.id
+        score = 0
+        problems = cls.get_problems_with_score_and_answer(user_id=user_id, chapter_id=chapter_id)  
+        for p in problems:
+            score += p.score
+        return score
+
+    def get_user_answer(self, user=None, user_id=None):
+        """
+        给定用户，获取用户对该题的回答
+        Args:
+            user/user_id: 用户
+        Return:
+            UserAndProblem: 用户的回答
+        """
+        user_id = user_id or user.id
+        return self.userandproblem_set.filter(user_id=user_id).first()
+
+    def is_answer_correct(self, answer):
+        """
+        判断给定的答案是否正确
+        Args:
+            answer<Solution>: 给定的答案
+        Return:
+            bool: 是否正确
+        """
+    
+        if not answer:
+            return False
+        solutions =  self.get_solutions()
+        if not solutions:
+            return False
+        return solutions[0]['option_id'] == answer.option_id
+
     def to_dict(self):
         d = {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
         d['chapter'] = self.chapter.to_dict()
         d['options'] = self.get_options()
         d['solutions'] = self.get_solutions()
         return d
+
+
 
 class Option(models.Model):
     problem = models.ForeignKey(Problem,on_delete=models.CASCADE)
@@ -166,7 +267,9 @@ class Solution(models.Model):
     option = models.ForeignKey(Option,on_delete=models.CASCADE)
     def to_dict(self):
         d = {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
+        d['option'] = self.option.to_dict()
         return d
+
 
 class UserAndProblem(models.Model):
     problem = models.ForeignKey(Problem,on_delete=models.CASCADE)
@@ -176,7 +279,19 @@ class UserAndProblem(models.Model):
 
     def to_dict(self):
         d = {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
-        # d['problem'] = self.problem.to_dict()
-        # d['option'] = self.option.to_dict()
-        # d['user'] = self.user.to_dict()
+        d['problem'] = self.problem.to_dict()
+        d['option'] = self.option.to_dict()
+        d['user'] = self.user.to_dict()
+        return d
+
+
+class Score(models.Model):
+    score = models.FloatField(default=0.0)
+    chapter = models.ForeignKey(Chapter,on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    datetime = models.DateTimeField('创建时间',auto_now_add=True)
+
+    def to_dict(self):
+        d = {k:v for k, v in self.__dict__.items() if not k.startswith('_')}
+        d['chapter'] = self.chapter.to_dict()
         return d

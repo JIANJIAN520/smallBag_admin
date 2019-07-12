@@ -2,7 +2,7 @@ from django.http import HttpResponse
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.template import loader
-from .models import User,Course,Teacher,Like,Comment,Order,UserAndCourse,Chapter,Problem,Option,Solution,UserAndProblem
+from .models import User,Course,Teacher,Like,Comment,Order,UserAndCourse,Chapter,Problem,Option,Solution,UserAndProblem,Score
 from django.db.models import Count
 from mysite.decorator import login_require,login_check
 import pdb
@@ -103,8 +103,7 @@ def courseDetail(request, course_id):
 def courseComment(request,course_id):
     data = {}
     comments = Comment.objects.filter(course_id=course_id).order_by('-date')
-    ret = {c.id: c.to_dict() for c in comments}
-    data['data'] = list(ret.values())
+    data['data'] = [c.to_dict() for c in comments]
     return JsonResponse(data, safe=False)
 
 
@@ -134,13 +133,18 @@ def addComment(request,course_id):
     content = req.get('content')
     res = Comment.objects.create(user=request.user, course_id=course_id, content=content)
     return Result.ok() if res else Result.error('评论失败')
-    
+
+  
 @login_require
 def getUserAndCourse(request):
-    courses = UserAndCourse.objects.filter(user_id = request.user.id)
+    if request.user.is_student:
+        courses = UserAndCourse.objects.filter(user_id = request.user.id)
+    else:
+        courses = Course.objects.filter(teacher_id = request.user.teacher.id)
     return JsonResponse({
         'data': [c.to_dict() for c in courses]
     }, safe=False)
+
 
 @login_check
 def getLikes(request, course_id):
@@ -165,8 +169,50 @@ def updateLike(request, course_id):
     like = Like.objects.create(user_id=request.user.id, course_id=course_id,is_like=True)
     return Result.ok() if like else Result.error('操作失败')
 
-def getProblems(request,course_id,chapter_id):
-    problems = Problem.objects.filter(chapter_id=chapter_id)
+@login_check
+def getProblems(request, course_id, chapter_id):
+    user = request.user
+    chapter_score = 0
+    if user:
+        problems = Problem.get_problems_with_score_and_answer(user=user, chapter_id=chapter_id)
+        chapter_score = Problem.get_chapter_score(user=user, chapter_id=chapter_id)
+    else:
+        problems = Problem.objects.filter(chapter_id=chapter_id)
+    
+    # end sort 
+    # [problems[a.problem_id].update({'answer_option_id': a.option_id}) for a in user_answers]
     return Result.ok({
-        'problems': [p.to_dict() for p in problems]
+        'problems': [p.to_dict() for p in problems],
+        'scores': chapter_score
     })
+
+@login_require
+def addAnswer(request, course_id):
+    answer = json.loads(request.body.decode()).get('params')
+    print(answer)
+    for k, v in answer.items():
+        res = UserAndProblem.objects.create(
+            user = request.user, 
+            problem_id = k[1:],
+            option_id = v, 
+            answered = True)
+    p = Problem.objects.filter(id=k[1:]).first()
+    Problem.cal_chapter_score(user=request.user, chapter_id=p.chapter_id)
+    return Result.ok() if res else Result.error('提交失败')
+
+
+@login_require
+def joinStudy(request,course_id):
+    can_watch = request.GET.get('0')
+    usercourse = UserAndCourse.objects.filter(user_id=request.user.id,course_id=course_id)
+    if not usercourse:
+        usercourse = UserAndCourse.objects.create(user_id=request.user.id,course_id=course_id,can_watch=can_watch)
+    return Result.ok() if usercourse else Result.error('操作失败')
+
+
+@login_require
+def getScores(request):
+    scores = Score.objects.filter(user_id=request.user.id)
+    return JsonResponse({
+        'data': [s.to_dict() for s in scores]
+    }, safe=False)

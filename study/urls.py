@@ -11,9 +11,12 @@ urlpatterns = [
     path('course/<int:course_id>/like/', views.getLikes, name='getLikes'),   
     path('course/name', views.getByName, name='getByName'),
     path('course/<int:course_id>/add/comment', views.addComment, name='addComment'),
+    path('course/<int:course_id>/join', views.joinStudy, name='joinStudy'),
     path('course/<int:course_id>/update/like/', views.updateLike, name='updateLike'),
     path('course/<int:course_id>/detail/<int:chapter_id>/problem/', views.getProblems, name='getProblems'),
+    path('course/<int:course_id>/problem/', views.addAnswer, name='addAnswer'),
     path('user/course', views.getUserAndCourse, name='getUserAndCourse'),
+    path('center/scores', views.getScores, name='getScores'),
     path('login', views.login, name='login'),
     path('signup', views.signup, name='signup'),
 ]
